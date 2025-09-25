@@ -6,7 +6,6 @@ import (
 	"io"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/jacoelho/pipebuf"
 )
@@ -59,8 +58,6 @@ func TestPipeBlocking(t *testing.T) {
 	wg.Go(func() {
 		_, writeErr = w.Write(data)
 	})
-
-	time.Sleep(10 * time.Millisecond)
 
 	buf := make([]byte, len(data))
 	mustReadFull(t, r, buf)
@@ -331,7 +328,6 @@ func TestBufferSizes(t *testing.T) {
 				readResult = buf
 			})
 
-			time.Sleep(10 * time.Millisecond)
 			mustWrite(t, w, []byte(tt.testData))
 
 			wg.Wait()
@@ -603,7 +599,6 @@ func TestCloseRaceCondition(t *testing.T) {
 			_, readErr = r.Read(buf)
 		})
 
-		time.Sleep(10 * time.Millisecond)
 		r.Close()
 
 		wg.Wait()
@@ -621,7 +616,6 @@ func TestCloseRaceCondition(t *testing.T) {
 			_, writeErr = w.Write([]byte("will block")) // block
 		})
 
-		time.Sleep(10 * time.Millisecond)
 		r.Close() // close reader while write is blocked
 
 		wg.Wait()
