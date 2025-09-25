@@ -1,8 +1,15 @@
 package pipebuf
 
 import (
+	"errors"
 	"io"
 	"sync"
+)
+
+var (
+	// ErrSamePipe is returned when attempting to copy data from a pipe to itself,
+	// which would cause a deadlock.
+	ErrSamePipe = errors.New("cannot copy to/from same pipe")
 )
 
 var (
@@ -179,6 +186,9 @@ func (r *PipeReader) Close() error {
 // WriteTo implements io.WriterTo by reading data from the pipe
 // and writing it to w until EOF or an error occurs.
 func (r *PipeReader) WriteTo(w io.Writer) (n int64, err error) {
+	if pw, ok := w.(*PipeWriter); ok && pw.p == r.p {
+		return 0, ErrSamePipe
+	}
 	return copyBuffered(r.Read, w.Write)
 }
 
@@ -204,6 +214,9 @@ func (w *PipeWriter) Write(b []byte) (int, error) {
 // ReadFrom implements io.ReaderFrom by reading data from r
 // and writing it to the pipe until EOF or an error occurs.
 func (w *PipeWriter) ReadFrom(r io.Reader) (n int64, err error) {
+	if pr, ok := r.(*PipeReader); ok && pr.p == w.p {
+		return 0, ErrSamePipe
+	}
 	return copyBuffered(r.Read, w.Write)
 }
 

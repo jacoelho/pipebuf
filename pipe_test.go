@@ -773,3 +773,28 @@ func TestPartialReadAfterWrite(t *testing.T) {
 		t.Fatalf("expected \"ef\", got %q", buf)
 	}
 }
+
+func TestSamePipeDeadlockPrevention(t *testing.T) {
+	r, w := newTestPipe(t, 10)
+
+	t.Run("WriteTo", func(t *testing.T) {
+		_, err := r.WriteTo(w)
+		if !errors.Is(err, pipebuf.ErrSamePipe) {
+			t.Fatalf("expected ErrSamePipe, got %v", err)
+		}
+	})
+
+	t.Run("ReadFrom", func(t *testing.T) {
+		_, err := w.ReadFrom(r)
+		if !errors.Is(err, pipebuf.ErrSamePipe) {
+			t.Fatalf("expected ErrSamePipe, got %v", err)
+		}
+	})
+
+	t.Run("ioCopy", func(t *testing.T) {
+		_, err := io.Copy(w, r)
+		if !errors.Is(err, pipebuf.ErrSamePipe) {
+			t.Fatalf("expected ErrSamePipe from io.Copy, got %v", err)
+		}
+	})
+}
