@@ -344,97 +344,82 @@ func TestBufferSizes(t *testing.T) {
 }
 
 func TestLargeDataIntegrity(t *testing.T) {
-	tests := []struct {
-		name       string
-		pattern    string
-		bufferSize int
-		dataSize   int
-		chunkSize  int
-	}{
-		{"LargeBuffer", "", 1024, 1024 * 1024, 0},                                            // 1MB data with 1KB buffer
-		{"SmallBuffer", "The quick brown fox jumps over the lazy dog. ", 64, 100 * 1024, 17}, // 100KB data with 64B buffer
+	r, w := newTestPipe(t, 1024)
+
+	testData := make([]byte, 1024*1024)
+	for i := range testData {
+		testData[i] = byte(i % 256)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r, w := newTestPipe(t, tt.bufferSize)
+	var wg sync.WaitGroup
+	var writeErr, readErr error
+	var receivedBuffer bytes.Buffer
 
-			testData := make([]byte, tt.dataSize)
-			if tt.pattern != "" {
-				// Use pattern for small buffer test
-				for i := range tt.dataSize {
-					testData[i] = tt.pattern[i%len(tt.pattern)]
-				}
-			} else {
-				// Use byte sequence for large buffer test
-				for i := range tt.dataSize {
-					testData[i] = byte(i % 256)
-				}
+	wg.Go(func() {
+		defer w.Close()
+		_, writeErr = w.Write(testData)
+	})
+
+	wg.Go(func() {
+		_, readErr = io.Copy(&receivedBuffer, r)
+	})
+
+	wg.Wait()
+
+	if writeErr != nil {
+		t.Fatalf("Write failed: %v", writeErr)
+	}
+	if readErr != nil {
+		t.Fatalf("Read failed: %v", readErr)
+	}
+
+	receivedData := receivedBuffer.Bytes()
+	if !bytes.Equal(testData, receivedData) {
+		t.Fatalf("Data integrity check failed")
+	}
+}
+
+func TestChunkedWriteIntegrity(t *testing.T) {
+	r, w := newTestPipe(t, 64)
+
+	testData := make([]byte, 100*1024)
+	for i := range testData {
+		testData[i] = byte(i % 256)
+	}
+
+	var wg sync.WaitGroup
+	var writeErr, readErr error
+	var receivedBuffer bytes.Buffer
+
+	wg.Go(func() {
+		defer w.Close()
+		chunkSize := 17
+		for i := 0; i < len(testData); i += chunkSize {
+			end := min(i+chunkSize, len(testData))
+			_, err := w.Write(testData[i:end])
+			if err != nil {
+				writeErr = err
+				return
 			}
+		}
+	})
 
-			var wg sync.WaitGroup
-			var writeErr, readErr error
-			var receivedBuffer bytes.Buffer
+	wg.Go(func() {
+		_, readErr = io.Copy(&receivedBuffer, r)
+	})
 
-			wg.Go(func() {
-				defer w.Close()
-				if tt.chunkSize > 0 {
-					// Write in chunks with micro-sleeps
-					for i := 0; i < tt.dataSize; i += tt.chunkSize {
-						end := min(i+tt.chunkSize, tt.dataSize)
-						_, err := w.Write(testData[i:end])
-						if err != nil {
-							writeErr = err
-							return
-						}
-						if i%1000 == 0 {
-							time.Sleep(time.Microsecond)
-						}
-					}
-				} else {
-					// Write continuously
-					written := 0
-					for written < tt.dataSize {
-						n, err := w.Write(testData[written:])
-						if err != nil {
-							writeErr = err
-							return
-						}
-						written += n
-					}
-				}
-			})
+	wg.Wait()
 
-			wg.Go(func() {
-				_, err := io.Copy(&receivedBuffer, r)
-				if err != nil {
-					readErr = err
-				}
-			})
+	if writeErr != nil {
+		t.Fatalf("Write failed: %v", writeErr)
+	}
+	if readErr != nil {
+		t.Fatalf("Read failed: %v", readErr)
+	}
 
-			wg.Wait()
-
-			if writeErr != nil {
-				t.Fatalf("Write error: %v", writeErr)
-			}
-			if readErr != nil {
-				t.Fatalf("Read error: %v", readErr)
-			}
-
-			receivedData := receivedBuffer.Bytes()
-			if len(receivedData) != tt.dataSize {
-				t.Fatalf("Size mismatch: expected %d bytes, got %d", tt.dataSize, len(receivedData))
-			}
-
-			if !bytes.Equal(testData, receivedData) {
-				for i := 0; i < min(len(testData), len(receivedData)); i++ {
-					if testData[i] != receivedData[i] {
-						t.Fatalf("Data corruption at byte %d: expected %d, got %d", i, testData[i], receivedData[i])
-					}
-				}
-				t.Fatalf("Data corruption detected")
-			}
-		})
+	receivedData := receivedBuffer.Bytes()
+	if !bytes.Equal(testData, receivedData) {
+		t.Fatalf("Data integrity check failed")
 	}
 }
 
