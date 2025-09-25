@@ -1,4 +1,4 @@
-package pipebuf
+package pipebuf_test
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jacoelho/pipebuf"
 )
 
 func TestPipeBasic(t *testing.T) {
@@ -74,7 +76,7 @@ func TestPipeBlocking(t *testing.T) {
 }
 
 func TestPipeCloseReader(t *testing.T) {
-	r, w := Pipe(10)
+	r, w := pipebuf.Pipe(10)
 
 	r.Close()
 
@@ -85,7 +87,7 @@ func TestPipeCloseReader(t *testing.T) {
 }
 
 func TestPipeCloseWriter(t *testing.T) {
-	r, w := Pipe(10)
+	r, w := pipebuf.Pipe(10)
 	defer r.Close()
 
 	w.Write([]byte("test"))
@@ -108,7 +110,7 @@ func TestPipeCloseWriter(t *testing.T) {
 
 func TestPipeRingBuffer(t *testing.T) {
 	bufSize := 4
-	r, w := Pipe(bufSize)
+	r, w := pipebuf.Pipe(bufSize)
 	defer r.Close()
 	defer w.Close()
 
@@ -129,7 +131,7 @@ func TestPipeRingBuffer(t *testing.T) {
 
 func TestPipeCloseWithError(t *testing.T) {
 	t.Run("WriterCloseWithError", func(t *testing.T) {
-		r, w := Pipe(10)
+		r, w := pipebuf.Pipe(10)
 		defer r.Close()
 
 		customErr := errors.New("custom write error")
@@ -143,7 +145,7 @@ func TestPipeCloseWithError(t *testing.T) {
 	})
 
 	t.Run("WriterCloseWithNilError", func(t *testing.T) {
-		r, w := Pipe(10)
+		r, w := pipebuf.Pipe(10)
 		defer r.Close()
 
 		w.CloseWithError(nil)
@@ -156,7 +158,7 @@ func TestPipeCloseWithError(t *testing.T) {
 	})
 
 	t.Run("ReaderCloseWithError", func(t *testing.T) {
-		r, w := Pipe(10)
+		r, w := pipebuf.Pipe(10)
 		defer w.Close()
 
 		customErr := errors.New("custom read error")
@@ -169,7 +171,7 @@ func TestPipeCloseWithError(t *testing.T) {
 	})
 
 	t.Run("ReaderCloseWithNilError", func(t *testing.T) {
-		r, w := Pipe(10)
+		r, w := pipebuf.Pipe(10)
 		defer w.Close()
 
 		r.CloseWithError(nil)
@@ -181,7 +183,7 @@ func TestPipeCloseWithError(t *testing.T) {
 	})
 
 	t.Run("CloseWithErrorDoesNotOverwrite", func(t *testing.T) {
-		r, w := Pipe(10)
+		r, w := pipebuf.Pipe(10)
 
 		firstErr := errors.New("first error")
 		secondErr := errors.New("second error")
@@ -198,7 +200,7 @@ func TestPipeCloseWithError(t *testing.T) {
 }
 
 func TestWriteTo(t *testing.T) {
-	r, w := Pipe(10)
+	r, w := pipebuf.Pipe(10)
 	defer r.Close()
 	defer w.Close()
 
@@ -224,7 +226,7 @@ func TestWriteTo(t *testing.T) {
 }
 
 func TestReadFrom(t *testing.T) {
-	r, w := Pipe(10)
+	r, w := pipebuf.Pipe(10)
 	defer r.Close()
 	defer w.Close()
 
@@ -257,7 +259,7 @@ func TestReadFrom(t *testing.T) {
 }
 
 func TestIOCopyOptimization(t *testing.T) {
-	r, w := Pipe(100)
+	r, w := pipebuf.Pipe(100)
 	defer r.Close()
 	defer w.Close()
 
@@ -283,7 +285,7 @@ func TestIOCopyOptimization(t *testing.T) {
 }
 
 func TestIOCopyFromSourceOptimization(t *testing.T) {
-	r, w := Pipe(100)
+	r, w := pipebuf.Pipe(100)
 	defer r.Close()
 	defer w.Close()
 
@@ -322,7 +324,7 @@ func TestIOCopyFromSourceOptimization(t *testing.T) {
 }
 
 func TestBufferedDataAvailableAfterReaderClose(t *testing.T) {
-	r, w := Pipe(10)
+	r, w := pipebuf.Pipe(10)
 	defer w.Close()
 
 	testData := "test"
@@ -355,7 +357,7 @@ func TestBufferedDataAvailableAfterReaderClose(t *testing.T) {
 }
 
 func TestBufferedDataAvailableAfterReaderCloseWithError(t *testing.T) {
-	r, w := Pipe(10)
+	r, w := pipebuf.Pipe(10)
 	defer w.Close()
 
 	testData := "test"
@@ -383,7 +385,7 @@ func TestBufferedDataAvailableAfterReaderCloseWithError(t *testing.T) {
 }
 
 func TestZeroSizeBuffer(t *testing.T) {
-	r, w := Pipe(0)
+	r, w := pipebuf.Pipe(0)
 	defer r.Close()
 	defer w.Close()
 
@@ -421,7 +423,7 @@ func TestZeroSizeBuffer(t *testing.T) {
 
 func TestLargeDataIntegrity(t *testing.T) {
 	bufferSize := 1024
-	r, w := Pipe(bufferSize)
+	r, w := pipebuf.Pipe(bufferSize)
 	defer r.Close()
 	defer w.Close()
 
@@ -490,7 +492,7 @@ func TestLargeDataIntegrity(t *testing.T) {
 
 func TestLargeDataWithSmallBuffer(t *testing.T) {
 	bufferSize := 64
-	r, w := Pipe(bufferSize)
+	r, w := pipebuf.Pipe(bufferSize)
 	defer r.Close()
 	defer w.Close()
 
@@ -559,7 +561,7 @@ func TestLargeDataWithSmallBuffer(t *testing.T) {
 }
 
 func TestFirstWriteEmptyPipe(t *testing.T) {
-	r, w := Pipe(10)
+	r, w := pipebuf.Pipe(10)
 	defer r.Close()
 	defer w.Close()
 
@@ -586,7 +588,7 @@ func TestFirstWriteEmptyPipe(t *testing.T) {
 }
 
 func TestWrapAroundWriteAfterTrim(t *testing.T) {
-	r, w := Pipe(4)
+	r, w := pipebuf.Pipe(4)
 	defer r.Close()
 	defer w.Close()
 
@@ -632,7 +634,7 @@ func TestWrapAroundWriteAfterTrim(t *testing.T) {
 }
 
 func TestZeroSizeBufferFirstWrite(t *testing.T) {
-	r, w := Pipe(0)
+	r, w := pipebuf.Pipe(0)
 	defer r.Close()
 	defer w.Close()
 
@@ -666,7 +668,7 @@ func TestZeroSizeBufferFirstWrite(t *testing.T) {
 }
 
 func TestReadZeroLengthBuffer(t *testing.T) {
-	r, w := Pipe(10)
+	r, w := pipebuf.Pipe(10)
 	defer r.Close()
 	defer w.Close()
 
@@ -704,7 +706,7 @@ func TestReadZeroLengthBuffer(t *testing.T) {
 }
 
 func TestNegativeBufferSize(t *testing.T) {
-	r, w := Pipe(-1)
+	r, w := pipebuf.Pipe(-1)
 	defer r.Close()
 	defer w.Close()
 
@@ -735,7 +737,7 @@ func TestNegativeBufferSize(t *testing.T) {
 }
 
 func TestBufferSizeOne(t *testing.T) {
-	r, w := Pipe(1)
+	r, w := pipebuf.Pipe(1)
 	defer r.Close()
 	defer w.Close()
 
@@ -780,7 +782,7 @@ func TestBufferSizeOne(t *testing.T) {
 
 func TestDoubleClose(t *testing.T) {
 	t.Run("ReaderDoubleClose", func(t *testing.T) {
-		r, w := Pipe(10)
+		r, w := pipebuf.Pipe(10)
 		defer w.Close()
 
 		err := r.Close()
@@ -795,7 +797,7 @@ func TestDoubleClose(t *testing.T) {
 	})
 
 	t.Run("WriterDoubleClose", func(t *testing.T) {
-		r, w := Pipe(10)
+		r, w := pipebuf.Pipe(10)
 		defer r.Close()
 
 		err := w.Close()
@@ -812,7 +814,7 @@ func TestDoubleClose(t *testing.T) {
 
 func TestLargeSingleWrite(t *testing.T) {
 	bufferSize := 10
-	r, w := Pipe(bufferSize)
+	r, w := pipebuf.Pipe(bufferSize)
 	defer r.Close()
 	defer w.Close()
 
@@ -856,7 +858,7 @@ func TestLargeSingleWrite(t *testing.T) {
 }
 
 func TestWriteToErrorPropagation(t *testing.T) {
-	r, w := Pipe(10)
+	r, w := pipebuf.Pipe(10)
 	defer r.Close()
 	defer w.Close()
 
@@ -876,7 +878,7 @@ func TestWriteToErrorPropagation(t *testing.T) {
 }
 
 func TestReadFromErrorPropagation(t *testing.T) {
-	r, w := Pipe(10)
+	r, w := pipebuf.Pipe(10)
 	defer r.Close()
 	defer w.Close()
 
@@ -893,7 +895,7 @@ func TestReadFromErrorPropagation(t *testing.T) {
 
 func TestCloseRaceCondition(t *testing.T) {
 	t.Run("CloseWhileReading", func(t *testing.T) {
-		r, w := Pipe(1)
+		r, w := pipebuf.Pipe(1)
 		defer w.Close()
 
 		var readErr error
@@ -913,7 +915,7 @@ func TestCloseRaceCondition(t *testing.T) {
 	})
 
 	t.Run("CloseWhileWriting", func(t *testing.T) {
-		r, w := Pipe(1)
+		r, w := pipebuf.Pipe(1)
 		defer r.Close()
 
 		w.Write([]byte("x"))
@@ -963,9 +965,9 @@ func (fr *failingReaderTest) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func newTestPipe(t *testing.T, size int) (*PipeReader, *PipeWriter) {
+func newTestPipe(t *testing.T, size int) (*pipebuf.PipeReader, *pipebuf.PipeWriter) {
 	t.Helper()
-	r, w := Pipe(size)
+	r, w := pipebuf.Pipe(size)
 	t.Cleanup(func() {
 		r.Close()
 		w.Close()
@@ -973,7 +975,7 @@ func newTestPipe(t *testing.T, size int) (*PipeReader, *PipeWriter) {
 	return r, w
 }
 
-func mustWrite(t *testing.T, w *PipeWriter, data []byte) int {
+func mustWrite(t *testing.T, w *pipebuf.PipeWriter, data []byte) int {
 	t.Helper()
 	n, err := w.Write(data)
 	if err != nil {
@@ -994,7 +996,7 @@ func mustReadFull(t *testing.T, r io.Reader, buf []byte) int {
 	return n
 }
 func TestWrappedReadPartial(t *testing.T) {
-	r, w := Pipe(4)
+	r, w := pipebuf.Pipe(4)
 	defer w.Close()
 
 	if _, err := w.Write([]byte("abcd")); err != nil {
@@ -1029,7 +1031,7 @@ func TestWrappedReadPartial(t *testing.T) {
 }
 
 func TestWriteAfterClose(t *testing.T) {
-	r, w := Pipe(8)
+	r, w := pipebuf.Pipe(8)
 	r.Close()
 
 	if _, err := w.Write([]byte("data")); err != io.ErrClosedPipe {
@@ -1038,7 +1040,7 @@ func TestWriteAfterClose(t *testing.T) {
 }
 
 func TestReadAfterClose(t *testing.T) {
-	r, w := Pipe(8)
+	r, w := pipebuf.Pipe(8)
 	w.Write([]byte("data"))
 	r.Close()
 
@@ -1055,7 +1057,7 @@ func TestReadAfterClose(t *testing.T) {
 }
 
 func TestWriteAfterCloseWriter(t *testing.T) {
-	r, w := Pipe(4)
+	r, w := pipebuf.Pipe(4)
 	defer r.Close()
 
 	if err := w.Close(); err != nil {
@@ -1066,4 +1068,3 @@ func TestWriteAfterCloseWriter(t *testing.T) {
 		t.Fatalf("expected io.ErrClosedPipe, got %v", err)
 	}
 }
-
