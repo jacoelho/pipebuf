@@ -75,115 +75,78 @@ func TestPipeBlocking(t *testing.T) {
 	}
 }
 
-func TestPipeCloseReader(t *testing.T) {
-	r, w := pipebuf.Pipe(10)
+func TestWriteFailsAfterReaderClose(t *testing.T) {
+	r, w := newTestPipe(t, 10)
 
 	r.Close()
 
 	_, err := w.Write([]byte("test"))
-	if err != io.ErrClosedPipe {
-		t.Fatalf("expected ErrClosedPipe, got %v", err)
-	}
+	expectError(t, err, io.ErrClosedPipe)
 }
 
-func TestPipeCloseWriter(t *testing.T) {
-	r, w := pipebuf.Pipe(10)
-	defer r.Close()
+func TestReadAfterWriterClose(t *testing.T) {
+	r, w := newTestPipe(t, 10)
 
-	w.Write([]byte("test"))
+	mustWrite(t, w, []byte("test"))
 	w.Close()
 
-	buf := make([]byte, 4)
-	n, err := r.Read(buf)
-	if err != nil {
-		t.Fatalf("Read failed: %v", err)
-	}
-	if n != 4 || string(buf) != "test" {
-		t.Fatalf("expected 'test', got %q", buf[:n])
-	}
-
-	_, err = r.Read(buf)
-	if err != io.EOF {
-		t.Fatalf("expected EOF, got %v", err)
-	}
+	mustRead(t, r, []byte("test"))
+	expectEOF(t, r)
 }
 
 func TestPipeRingBuffer(t *testing.T) {
-	bufSize := 4
-	r, w := pipebuf.Pipe(bufSize)
-	defer r.Close()
-	defer w.Close()
+	r, w := newTestPipe(t, 4)
 
-	for i := range 3 {
+	for range 3 {
 		data := []byte("ab")
-		w.Write(data)
-
-		buf := make([]byte, 2)
-		n, err := r.Read(buf)
-		if err != nil {
-			t.Fatalf("Read %d failed: %v", i, err)
-		}
-		if n != 2 || string(buf) != "ab" {
-			t.Fatalf("Read %d: expected 'ab', got %q", i, buf[:n])
-		}
+		mustWrite(t, w, data)
+		mustRead(t, r, data)
 	}
 }
 
 func TestPipeCloseWithError(t *testing.T) {
 	t.Run("WriterCloseWithError", func(t *testing.T) {
-		r, w := pipebuf.Pipe(10)
-		defer r.Close()
+		r, w := newTestPipe(t, 10)
 
 		customErr := errors.New("custom write error")
 		w.CloseWithError(customErr)
 
 		buf := make([]byte, 10)
 		_, err := r.Read(buf)
-		if err != customErr {
-			t.Fatalf("expected custom error %v, got %v", customErr, err)
-		}
+		expectError(t, err, customErr)
 	})
 
 	t.Run("WriterCloseWithNilError", func(t *testing.T) {
-		r, w := pipebuf.Pipe(10)
-		defer r.Close()
+		r, w := newTestPipe(t, 10)
 
 		w.CloseWithError(nil)
 
 		buf := make([]byte, 10)
 		_, err := r.Read(buf)
-		if err != io.EOF {
-			t.Fatalf("expected EOF, got %v", err)
-		}
+		expectError(t, err, io.EOF)
 	})
 
 	t.Run("ReaderCloseWithError", func(t *testing.T) {
-		r, w := pipebuf.Pipe(10)
-		defer w.Close()
+		r, w := newTestPipe(t, 10)
 
 		customErr := errors.New("custom read error")
 		r.CloseWithError(customErr)
 
 		_, err := w.Write([]byte("test"))
-		if err != customErr {
-			t.Fatalf("expected custom error %v, got %v", customErr, err)
-		}
+		expectError(t, err, customErr)
 	})
 
 	t.Run("ReaderCloseWithNilError", func(t *testing.T) {
-		r, w := pipebuf.Pipe(10)
-		defer w.Close()
+		r, w := newTestPipe(t, 10)
 
 		r.CloseWithError(nil)
 
 		_, err := w.Write([]byte("test"))
-		if err != io.ErrClosedPipe {
-			t.Fatalf("expected ErrClosedPipe, got %v", err)
-		}
+		expectError(t, err, io.ErrClosedPipe)
 	})
 
 	t.Run("CloseWithErrorDoesNotOverwrite", func(t *testing.T) {
-		r, w := pipebuf.Pipe(10)
+		r, w := newTestPipe(t, 10)
 
 		firstErr := errors.New("first error")
 		secondErr := errors.New("second error")
@@ -193,23 +156,19 @@ func TestPipeCloseWithError(t *testing.T) {
 
 		buf := make([]byte, 10)
 		_, err := r.Read(buf)
-		if err != firstErr {
-			t.Fatalf("expected first error %v, got %v", firstErr, err)
-		}
+		expectError(t, err, firstErr)
 	})
 }
 
 func TestWriteTo(t *testing.T) {
-	r, w := pipebuf.Pipe(10)
-	defer r.Close()
-	defer w.Close()
+	r, w := newTestPipe(t, 10)
 
 	input := "hello world from WriteTo"
 	output := &bytes.Buffer{}
 
 	go func() {
 		defer w.Close()
-		w.Write([]byte(input))
+		mustWrite(t, w, []byte(input))
 	}()
 
 	n, err := r.WriteTo(output)
@@ -226,9 +185,7 @@ func TestWriteTo(t *testing.T) {
 }
 
 func TestReadFrom(t *testing.T) {
-	r, w := pipebuf.Pipe(10)
-	defer r.Close()
-	defer w.Close()
+	r, w := newTestPipe(t, 10)
 
 	input := "hello world from ReadFrom"
 	source := bytes.NewReader([]byte(input))
@@ -258,17 +215,15 @@ func TestReadFrom(t *testing.T) {
 	}
 }
 
-func TestIOCopyOptimization(t *testing.T) {
-	r, w := pipebuf.Pipe(100)
-	defer r.Close()
-	defer w.Close()
+func TestIOCopy(t *testing.T) {
+	r, w := newTestPipe(t, 100)
 
-	input := "test data for io.Copy optimization"
+	input := "test data for io.Copy"
 	output := &bytes.Buffer{}
 
 	go func() {
 		defer w.Close()
-		w.Write([]byte(input))
+		mustWrite(t, w, []byte(input))
 	}()
 
 	n, err := io.Copy(output, r)
@@ -284,10 +239,8 @@ func TestIOCopyOptimization(t *testing.T) {
 	}
 }
 
-func TestIOCopyFromSourceOptimization(t *testing.T) {
-	r, w := pipebuf.Pipe(100)
-	defer r.Close()
-	defer w.Close()
+func TestIOCopyFromReader(t *testing.T) {
+	r, w := newTestPipe(t, 100)
 
 	input := "test data for ReadFrom optimization"
 	source := bytes.NewReader([]byte(input))
@@ -323,354 +276,198 @@ func TestIOCopyFromSourceOptimization(t *testing.T) {
 	}
 }
 
-func TestBufferedDataAvailableAfterReaderClose(t *testing.T) {
-	r, w := pipebuf.Pipe(10)
-	defer w.Close()
+func TestReadBufferedDataAfterReaderClose(t *testing.T) {
+	r, w := newTestPipe(t, 10)
 
 	testData := "test"
-	n, err := w.Write([]byte(testData))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
-	if n != len(testData) {
-		t.Fatalf("expected to write %d bytes, wrote %d", len(testData), n)
-	}
+	mustWrite(t, w, []byte(testData))
 
 	r.Close()
 
-	buf := make([]byte, len(testData))
-	n, err = r.Read(buf)
-	if err != nil {
-		t.Fatalf("Read failed after close: %v", err)
-	}
-	if n != len(testData) {
-		t.Fatalf("expected to read %d bytes, read %d", len(testData), n)
-	}
-	if string(buf) != testData {
-		t.Fatalf("expected %q, got %q", testData, string(buf))
-	}
+	mustRead(t, r, []byte(testData))
 
-	_, err = r.Read(buf)
-	if err != io.ErrClosedPipe {
-		t.Fatalf("expected ErrClosedPipe after buffer emptied, got %v", err)
-	}
+	buf := make([]byte, 1)
+	_, err := r.Read(buf)
+	expectError(t, err, io.ErrClosedPipe)
 }
 
-func TestBufferedDataAvailableAfterReaderCloseWithError(t *testing.T) {
-	r, w := pipebuf.Pipe(10)
-	defer w.Close()
+func TestReadBufferedDataAfterReaderCloseWithError(t *testing.T) {
+	r, w := newTestPipe(t, 10)
 
 	testData := "test"
-	w.Write([]byte(testData))
+	mustWrite(t, w, []byte(testData))
 
 	customErr := errors.New("custom close error")
 	r.CloseWithError(customErr)
 
-	buf := make([]byte, len(testData))
-	n, err := r.Read(buf)
-	if err != nil {
-		t.Fatalf("Read failed after CloseWithError: %v", err)
-	}
-	if n != len(testData) {
-		t.Fatalf("expected to read %d bytes, read %d", len(testData), n)
-	}
-	if string(buf) != testData {
-		t.Fatalf("expected %q, got %q", testData, string(buf))
-	}
+	mustRead(t, r, []byte(testData))
 
-	_, err = r.Read(buf)
-	if err != customErr {
-		t.Fatalf("expected custom error after buffer emptied, got %v", err)
-	}
+	buf := make([]byte, 1)
+	_, err := r.Read(buf)
+	expectError(t, err, customErr)
 }
 
-func TestZeroSizeBuffer(t *testing.T) {
-	r, w := pipebuf.Pipe(0)
-	defer r.Close()
-	defer w.Close()
-
-	testData := "zero buffer test"
-	var wg sync.WaitGroup
-	var readResult []byte
-	var readErr error
-
-	wg.Go(func() {
-		buf := make([]byte, len(testData))
-		n, err := io.ReadFull(r, buf)
-		readErr = err
-		readResult = buf[:n]
-	})
-
-	time.Sleep(10 * time.Millisecond)
-
-	n, err := w.Write([]byte(testData))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
-	if n != len(testData) {
-		t.Fatalf("expected to write %d bytes, wrote %d", len(testData), n)
+func TestBufferSizes(t *testing.T) {
+	tests := []struct {
+		name       string
+		testData   string
+		bufferSize int
+	}{
+		{"ZeroSize", "zero buffer test", 0},
+		{"NegativeSize", "negative test", -1},
+		{"SizeOne", "a", 1},
 	}
 
-	wg.Wait()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, w := newTestPipe(t, tt.bufferSize)
 
-	if readErr != nil {
-		t.Fatalf("Read failed: %v", readErr)
-	}
-	if string(readResult) != testData {
-		t.Fatalf("expected %q, got %q", testData, string(readResult))
+			var wg sync.WaitGroup
+			var readResult []byte
+
+			wg.Go(func() {
+				buf := make([]byte, len(tt.testData))
+				mustReadFull(t, r, buf)
+				readResult = buf
+			})
+
+			time.Sleep(10 * time.Millisecond)
+			mustWrite(t, w, []byte(tt.testData))
+
+			wg.Wait()
+
+			if string(readResult) != tt.testData {
+				t.Fatalf("expected %q, got %q", tt.testData, string(readResult))
+			}
+		})
 	}
 }
 
 func TestLargeDataIntegrity(t *testing.T) {
-	bufferSize := 1024
-	r, w := pipebuf.Pipe(bufferSize)
-	defer r.Close()
-	defer w.Close()
-
-	dataSize := 10 * 1024 * 1024
-	testData := make([]byte, dataSize)
-
-	for i := range dataSize {
-		testData[i] = byte(i % 256)
+	tests := []struct {
+		name       string
+		pattern    string
+		bufferSize int
+		dataSize   int
+		chunkSize  int
+	}{
+		{"LargeBuffer", "", 1024, 1024 * 1024, 0},                                            // 1MB data with 1KB buffer
+		{"SmallBuffer", "The quick brown fox jumps over the lazy dog. ", 64, 100 * 1024, 17}, // 100KB data with 64B buffer
 	}
 
-	var wg sync.WaitGroup
-	var writeErr, readErr error
-	receivedData := make([]byte, dataSize)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, w := newTestPipe(t, tt.bufferSize)
 
-	wg.Go(func() {
-		defer w.Close()
-
-		written := 0
-		for written < dataSize {
-			n, err := w.Write(testData[written:])
-			if err != nil {
-				writeErr = err
-				return
+			testData := make([]byte, tt.dataSize)
+			if tt.pattern != "" {
+				// Use pattern for small buffer test
+				for i := range tt.dataSize {
+					testData[i] = tt.pattern[i%len(tt.pattern)]
+				}
+			} else {
+				// Use byte sequence for large buffer test
+				for i := range tt.dataSize {
+					testData[i] = byte(i % 256)
+				}
 			}
-			written += n
-		}
-	})
 
-	wg.Go(func() {
-		totalRead := 0
-		for totalRead < dataSize {
-			n, err := r.Read(receivedData[totalRead:])
-			if err != nil && err != io.EOF {
-				readErr = err
-				return
+			var wg sync.WaitGroup
+			var writeErr, readErr error
+			var receivedBuffer bytes.Buffer
+
+			wg.Go(func() {
+				defer w.Close()
+				if tt.chunkSize > 0 {
+					// Write in chunks with micro-sleeps
+					for i := 0; i < tt.dataSize; i += tt.chunkSize {
+						end := min(i+tt.chunkSize, tt.dataSize)
+						_, err := w.Write(testData[i:end])
+						if err != nil {
+							writeErr = err
+							return
+						}
+						if i%1000 == 0 {
+							time.Sleep(time.Microsecond)
+						}
+					}
+				} else {
+					// Write continuously
+					written := 0
+					for written < tt.dataSize {
+						n, err := w.Write(testData[written:])
+						if err != nil {
+							writeErr = err
+							return
+						}
+						written += n
+					}
+				}
+			})
+
+			wg.Go(func() {
+				_, err := io.Copy(&receivedBuffer, r)
+				if err != nil {
+					readErr = err
+				}
+			})
+
+			wg.Wait()
+
+			if writeErr != nil {
+				t.Fatalf("Write error: %v", writeErr)
 			}
-			totalRead += n
-			if err == io.EOF {
-				break
+			if readErr != nil {
+				t.Fatalf("Read error: %v", readErr)
 			}
-		}
 
-		if totalRead != dataSize {
-			readErr = errors.New("incomplete read")
-		}
-	})
-
-	wg.Wait()
-
-	if writeErr != nil {
-		t.Fatalf("Write error: %v", writeErr)
-	}
-	if readErr != nil {
-		t.Fatalf("Read error: %v", readErr)
-	}
-
-	if !bytes.Equal(testData, receivedData) {
-		for i := range dataSize {
-			if testData[i] != receivedData[i] {
-				t.Fatalf("Data corruption at byte %d: expected %d, got %d", i, testData[i], receivedData[i])
+			receivedData := receivedBuffer.Bytes()
+			if len(receivedData) != tt.dataSize {
+				t.Fatalf("Size mismatch: expected %d bytes, got %d", tt.dataSize, len(receivedData))
 			}
-		}
-		t.Fatalf("Data corruption detected but no specific byte difference found")
+
+			if !bytes.Equal(testData, receivedData) {
+				for i := 0; i < min(len(testData), len(receivedData)); i++ {
+					if testData[i] != receivedData[i] {
+						t.Fatalf("Data corruption at byte %d: expected %d, got %d", i, testData[i], receivedData[i])
+					}
+				}
+				t.Fatalf("Data corruption detected")
+			}
+		})
 	}
 }
 
-func TestLargeDataWithSmallBuffer(t *testing.T) {
-	bufferSize := 64
-	r, w := pipebuf.Pipe(bufferSize)
-	defer r.Close()
-	defer w.Close()
-
-	dataSize := 100 * 1024
-	testData := make([]byte, dataSize)
-
-	pattern := "The quick brown fox jumps over the lazy dog. "
-	for i := range dataSize {
-		testData[i] = pattern[i%len(pattern)]
-	}
-
-	var wg sync.WaitGroup
-	var writeErr, readErr error
-	var receivedBuffer bytes.Buffer
-
-	wg.Go(func() {
-		defer w.Close()
-
-		chunkSize := 17
-		for i := 0; i < dataSize; i += chunkSize {
-			end := min(i+chunkSize, dataSize)
-
-			_, err := w.Write(testData[i:end])
-			if err != nil {
-				writeErr = err
-				return
-			}
-
-			if i%1000 == 0 {
-				time.Sleep(time.Microsecond)
-			}
-		}
-	})
-
-	wg.Go(func() {
-		_, err := io.Copy(&receivedBuffer, r)
-		if err != nil {
-			readErr = err
-		}
-	})
-
-	wg.Wait()
-
-	if writeErr != nil {
-		t.Fatalf("Write error: %v", writeErr)
-	}
-	if readErr != nil {
-		t.Fatalf("Read error: %v", readErr)
-	}
-
-	receivedData := receivedBuffer.Bytes()
-	if len(receivedData) != dataSize {
-		t.Fatalf("Size mismatch: expected %d bytes, got %d", dataSize, len(receivedData))
-	}
-
-	if !bytes.Equal(testData, receivedData) {
-		for i := 0; i < min(len(testData), len(receivedData)); i++ {
-			if testData[i] != receivedData[i] {
-				t.Fatalf("Data corruption at byte %d: expected %q, got %q",
-					i, string(testData[i:min(i+10, len(testData))]),
-					string(receivedData[i:min(i+10, len(receivedData))]))
-			}
-		}
-		t.Fatalf("Data corruption detected")
-	}
-}
-
-func TestFirstWriteEmptyPipe(t *testing.T) {
-	r, w := pipebuf.Pipe(10)
-	defer r.Close()
-	defer w.Close()
+func TestBasicWriteRead(t *testing.T) {
+	r, w := newTestPipe(t, 10)
 
 	data := []byte("first")
-	n, err := w.Write(data)
-	if err != nil {
-		t.Fatalf("First write failed: %v", err)
-	}
-	if n != len(data) {
-		t.Fatalf("Expected to write %d bytes, wrote %d", len(data), n)
-	}
+	mustWrite(t, w, data)
 
-	buf := make([]byte, len(data))
-	n, err = r.Read(buf)
-	if err != nil {
-		t.Fatalf("Read failed: %v", err)
-	}
-	if n != len(data) {
-		t.Fatalf("Expected to read %d bytes, read %d", len(data), n)
-	}
-	if string(buf) != string(data) {
-		t.Fatalf("Expected %q, got %q", data, buf)
-	}
+	mustRead(t, r, data)
 }
 
-func TestWrapAroundWriteAfterTrim(t *testing.T) {
-	r, w := pipebuf.Pipe(4)
-	defer r.Close()
-	defer w.Close()
+func TestRingBufferWrapAround(t *testing.T) {
+	r, w := newTestPipe(t, 4)
 
 	data1 := []byte("abcd")
-	n, err := w.Write(data1)
-	if err != nil {
-		t.Fatalf("First write failed: %v", err)
-	}
-	if n != len(data1) {
-		t.Fatalf("Expected to write %d bytes, wrote %d", len(data1), n)
-	}
+	mustWrite(t, w, data1)
 
-	buf := make([]byte, 2)
-	n, err = r.Read(buf)
-	if err != nil {
-		t.Fatalf("Read failed: %v", err)
-	}
-	if n != 2 {
-		t.Fatalf("Expected to read 2 bytes, read %d", n)
-	}
-	if string(buf) != "ab" {
-		t.Fatalf("Expected 'ab', got %q", buf)
-	}
+	mustRead(t, r, []byte("ab"))
 
 	data2 := []byte("xy")
-	n, err = w.Write(data2)
-	if err != nil {
-		t.Fatalf("Wrap-around write failed: %v", err)
-	}
-	if n != len(data2) {
-		t.Fatalf("Expected to write %d bytes, wrote %d", len(data2), n)
-	}
+	mustWrite(t, w, data2)
 
 	remaining := make([]byte, 4) // "cd" + "xy"
-	_, err = io.ReadFull(r, remaining)
-	if err != nil {
-		t.Fatalf("Reading remaining data failed: %v", err)
-	}
+	mustReadFull(t, r, remaining)
 	expected := "cdxy"
 	if string(remaining) != expected {
 		t.Fatalf("Expected %q, got %q", expected, remaining)
 	}
 }
 
-func TestZeroSizeBufferFirstWrite(t *testing.T) {
-	r, w := pipebuf.Pipe(0)
-	defer r.Close()
-	defer w.Close()
-
-	data := []byte("test")
-	var wg sync.WaitGroup
-	var writeErr error
-
-	wg.Go(func() {
-		_, writeErr = w.Write(data)
-	})
-
-	time.Sleep(10 * time.Millisecond)
-
-	buf := make([]byte, len(data))
-	n, err := io.ReadFull(r, buf)
-	if err != nil {
-		t.Fatalf("Read failed: %v", err)
-	}
-	if n != len(data) {
-		t.Fatalf("Expected to read %d bytes, read %d", len(data), n)
-	}
-
-	wg.Wait()
-	if writeErr != nil {
-		t.Fatalf("Write failed: %v", writeErr)
-	}
-
-	if string(buf) != string(data) {
-		t.Fatalf("Expected %q, got %q", data, buf)
-	}
-}
-
-func TestReadZeroLengthBuffer(t *testing.T) {
-	r, w := pipebuf.Pipe(10)
-	defer r.Close()
-	defer w.Close()
+func TestReadWithZeroLengthBuffer(t *testing.T) {
+	r, w := newTestPipe(t, 10)
 
 	zeroBuf := make([]byte, 0)
 	n, err := r.Read(zeroBuf)
@@ -682,7 +479,7 @@ func TestReadZeroLengthBuffer(t *testing.T) {
 	}
 
 	data := []byte("test")
-	w.Write(data)
+	mustWrite(t, w, data)
 
 	n, err = r.Read(zeroBuf)
 	if n != 0 {
@@ -705,85 +502,9 @@ func TestReadZeroLengthBuffer(t *testing.T) {
 	}
 }
 
-func TestNegativeBufferSize(t *testing.T) {
-	r, w := pipebuf.Pipe(-1)
-	defer r.Close()
-	defer w.Close()
-
-	data := []byte("test")
-	var (
-		wg       sync.WaitGroup
-		writeErr error
-	)
-
-	wg.Go(func() {
-		if _, err := w.Write(data); err != nil {
-			writeErr = err
-		}
-	})
-
-	buf := make([]byte, len(data))
-	if _, err := io.ReadFull(r, buf); err != nil {
-		t.Fatalf("Read failed: %v", err)
-	}
-
-	wg.Wait()
-	if writeErr != nil {
-		t.Fatalf("Write failed with negative buffer size: %v", writeErr)
-	}
-	if string(buf) != string(data) {
-		t.Fatalf("Expected %q, got %q", data, buf)
-	}
-}
-
-func TestBufferSizeOne(t *testing.T) {
-	r, w := pipebuf.Pipe(1)
-	defer r.Close()
-	defer w.Close()
-
-	n, err := w.Write([]byte("a"))
-	if err != nil {
-		t.Fatalf("First write failed: %v", err)
-	}
-	if n != 1 {
-		t.Fatalf("Expected to write 1 byte, wrote %d", n)
-	}
-
-	var writeErr error
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		_, writeErr = w.Write([]byte("b"))
-	})
-
-	time.Sleep(10 * time.Millisecond)
-
-	buf := make([]byte, 1)
-	_, err = r.Read(buf)
-	if err != nil {
-		t.Fatalf("Read failed: %v", err)
-	}
-	if string(buf) != "a" {
-		t.Fatalf("Expected 'a', got %q", buf)
-	}
-
-	wg.Wait()
-	if writeErr != nil {
-		t.Fatalf("Second write failed: %v", writeErr)
-	}
-
-	_, err = r.Read(buf)
-	if err != nil {
-		t.Fatalf("Second read failed: %v", err)
-	}
-	if string(buf) != "b" {
-		t.Fatalf("Expected 'b', got %q", buf)
-	}
-}
-
 func TestDoubleClose(t *testing.T) {
 	t.Run("ReaderDoubleClose", func(t *testing.T) {
-		r, w := pipebuf.Pipe(10)
-		defer w.Close()
+		r, _ := newTestPipe(t, 10)
 
 		err := r.Close()
 		if err != nil {
@@ -797,8 +518,7 @@ func TestDoubleClose(t *testing.T) {
 	})
 
 	t.Run("WriterDoubleClose", func(t *testing.T) {
-		r, w := pipebuf.Pipe(10)
-		defer r.Close()
+		_, w := newTestPipe(t, 10)
 
 		err := w.Close()
 		if err != nil {
@@ -814,9 +534,7 @@ func TestDoubleClose(t *testing.T) {
 
 func TestLargeSingleWrite(t *testing.T) {
 	bufferSize := 10
-	r, w := pipebuf.Pipe(bufferSize)
-	defer r.Close()
-	defer w.Close()
+	r, w := newTestPipe(t, bufferSize)
 
 	largeData := make([]byte, bufferSize*5)
 	for i := range largeData {
@@ -857,13 +575,11 @@ func TestLargeSingleWrite(t *testing.T) {
 	}
 }
 
-func TestWriteToErrorPropagation(t *testing.T) {
-	r, w := pipebuf.Pipe(10)
-	defer r.Close()
-	defer w.Close()
+func TestWriteToWithWriteError(t *testing.T) {
+	r, w := newTestPipe(t, 10)
 
 	data := []byte("test data")
-	w.Write(data)
+	mustWrite(t, w, data)
 	w.Close()
 
 	failingWriter := &failingWriterTest{failAfter: 4}
@@ -877,10 +593,8 @@ func TestWriteToErrorPropagation(t *testing.T) {
 	}
 }
 
-func TestReadFromErrorPropagation(t *testing.T) {
-	r, w := pipebuf.Pipe(10)
-	defer r.Close()
-	defer w.Close()
+func TestReadFromWithReadError(t *testing.T) {
+	_, w := newTestPipe(t, 10)
 
 	failingReader := &failingReaderTest{data: []byte("test data"), failAfter: 4}
 
@@ -895,8 +609,7 @@ func TestReadFromErrorPropagation(t *testing.T) {
 
 func TestCloseRaceCondition(t *testing.T) {
 	t.Run("CloseWhileReading", func(t *testing.T) {
-		r, w := pipebuf.Pipe(1)
-		defer w.Close()
+		r, _ := newTestPipe(t, 1)
 
 		var readErr error
 		var wg sync.WaitGroup
@@ -909,16 +622,13 @@ func TestCloseRaceCondition(t *testing.T) {
 		r.Close()
 
 		wg.Wait()
-		if readErr != io.ErrClosedPipe {
-			t.Fatalf("Expected ErrClosedPipe, got %v", readErr)
-		}
+		expectError(t, readErr, io.ErrClosedPipe)
 	})
 
 	t.Run("CloseWhileWriting", func(t *testing.T) {
-		r, w := pipebuf.Pipe(1)
-		defer r.Close()
+		r, w := newTestPipe(t, 1)
 
-		w.Write([]byte("x"))
+		mustWrite(t, w, []byte("x"))
 
 		var writeErr error
 		var wg sync.WaitGroup
@@ -930,10 +640,39 @@ func TestCloseRaceCondition(t *testing.T) {
 		r.Close() // close reader while write is blocked
 
 		wg.Wait()
-		if writeErr != io.ErrClosedPipe {
-			t.Fatalf("Expected ErrClosedPipe, got %v", writeErr)
-		}
+		expectError(t, writeErr, io.ErrClosedPipe)
 	})
+}
+
+func TestWriteFailsWhenReaderClosed(t *testing.T) {
+	r, w := newTestPipe(t, 8)
+	r.Close()
+
+	_, err := w.Write([]byte("data"))
+	expectError(t, err, io.ErrClosedPipe)
+}
+
+func TestReadAfterReaderClose(t *testing.T) {
+	r, w := newTestPipe(t, 8)
+	mustWrite(t, w, []byte("data"))
+	r.Close()
+
+	mustRead(t, r, []byte("data"))
+
+	buf := make([]byte, 1)
+	_, err := r.Read(buf)
+	expectError(t, err, io.ErrClosedPipe)
+}
+
+func TestWriteFailsAfterWriterClose(t *testing.T) {
+	_, w := newTestPipe(t, 4)
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("writer close failed: %v", err)
+	}
+
+	_, err := w.Write([]byte("data"))
+	expectError(t, err, io.ErrClosedPipe)
 }
 
 type failingWriterTest struct {
@@ -995,13 +734,41 @@ func mustReadFull(t *testing.T, r io.Reader, buf []byte) int {
 	}
 	return n
 }
-func TestWrappedReadPartial(t *testing.T) {
-	r, w := pipebuf.Pipe(4)
-	defer w.Close()
 
-	if _, err := w.Write([]byte("abcd")); err != nil {
-		t.Fatalf("initial write failed: %v", err)
+func mustRead(t *testing.T, r io.Reader, expected []byte) {
+	t.Helper()
+	buf := make([]byte, len(expected))
+	n, err := r.Read(buf)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
 	}
+	if n != len(expected) {
+		t.Fatalf("expected to read %d bytes, read %d", len(expected), n)
+	}
+	if !bytes.Equal(buf, expected) {
+		t.Fatalf("expected %q, got %q", expected, buf)
+	}
+}
+
+func expectError(t *testing.T, err, expected error) {
+	t.Helper()
+	if err != expected {
+		t.Fatalf("expected %v, got %v", expected, err)
+	}
+}
+
+func expectEOF(t *testing.T, r io.Reader) {
+	t.Helper()
+	buf := make([]byte, 1)
+	_, err := r.Read(buf)
+	if err != io.EOF {
+		t.Fatalf("expected EOF, got %v", err)
+	}
+}
+func TestPartialReadAfterWrite(t *testing.T) {
+	r, w := newTestPipe(t, 4)
+
+	mustWrite(t, w, []byte("abcd"))
 
 	buf := make([]byte, 2)
 	if _, err := r.Read(buf); err != nil {
@@ -1011,9 +778,7 @@ func TestWrappedReadPartial(t *testing.T) {
 		t.Fatalf("expected \"ab\", got %q", buf)
 	}
 
-	if _, err := w.Write([]byte("ef")); err != nil {
-		t.Fatalf("second write failed: %v", err)
-	}
+	mustWrite(t, w, []byte("ef"))
 
 	if _, err := r.Read(buf); err != nil {
 		t.Fatalf("second read failed: %v", err)
@@ -1027,44 +792,5 @@ func TestWrappedReadPartial(t *testing.T) {
 	}
 	if string(buf) != "ef" {
 		t.Fatalf("expected \"ef\", got %q", buf)
-	}
-}
-
-func TestWriteAfterClose(t *testing.T) {
-	r, w := pipebuf.Pipe(8)
-	r.Close()
-
-	if _, err := w.Write([]byte("data")); err != io.ErrClosedPipe {
-		t.Fatalf("expected io.ErrClosedPipe, got %v", err)
-	}
-}
-
-func TestReadAfterClose(t *testing.T) {
-	r, w := pipebuf.Pipe(8)
-	w.Write([]byte("data"))
-	r.Close()
-
-	buf := make([]byte, 4)
-	if n, err := r.Read(buf); err != nil {
-		t.Fatalf("unexpected error while draining buffer: %v", err)
-	} else if string(buf[:n]) != "data" {
-		t.Fatalf("expected to read \"data\", got %q", buf[:n])
-	}
-
-	if _, err := r.Read(buf); err != io.ErrClosedPipe {
-		t.Fatalf("expected io.ErrClosedPipe, got %v", err)
-	}
-}
-
-func TestWriteAfterCloseWriter(t *testing.T) {
-	r, w := pipebuf.Pipe(4)
-	defer r.Close()
-
-	if err := w.Close(); err != nil {
-		t.Fatalf("writer close failed: %v", err)
-	}
-
-	if _, err := w.Write([]byte("data")); err != io.ErrClosedPipe {
-		t.Fatalf("expected io.ErrClosedPipe, got %v", err)
 	}
 }

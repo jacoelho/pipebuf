@@ -18,20 +18,19 @@ type pipe struct {
 	readerClosedErr error
 	writerClosedErr error
 
+	buffer *ringBuffer
+
 	writerWait sync.Cond
 	readerWait sync.Cond
 
-	buffer   []byte
-	writePos int
-	readPos  int
-	mu       sync.Mutex
+	mu sync.Mutex
 
 	readerClosed bool
 	writerClosed bool
 }
 
 func newPipe(size int) *pipe {
-	p := &pipe{buffer: make([]byte, 0, size)}
+	p := &pipe{buffer: newRingBuffer(size)}
 	p.writerWait.L = &p.mu
 	p.readerWait.L = &p.mu
 	return p
@@ -44,12 +43,12 @@ func (p *pipe) Read(b []byte) (n int, err error) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.waitForReadableLocked(); err != nil {
+	if err := p.waitForDataLocked(); err != nil {
 		return 0, err
 	}
 
-	wasFull := p.full()
-	n = p.readChunkLocked(b)
+	wasFull := p.buffer.full()
+	n = p.buffer.read(b)
 
 	if wasFull {
 		p.writerWait.Signal()
@@ -62,11 +61,11 @@ func (p *pipe) Write(b []byte) (n int, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for len(b) > 0 {
-		if err := p.waitForWritableLocked(); err != nil {
+		if err := p.waitForSpaceLocked(); err != nil {
 			return n, err
 		}
-		wasEmpty := p.empty()
-		wrote := p.writeChunkLocked(b)
+		wasEmpty := p.buffer.empty()
+		wrote := p.buffer.write(b)
 		b = b[wrote:]
 		n += wrote
 		if wasEmpty {
@@ -81,14 +80,6 @@ func (p *pipe) Close() error {
 	defer p.mu.Unlock()
 	p.closeReaderLocked(nil, false)
 	return nil
-}
-
-func (p *pipe) empty() bool {
-	return p.readPos == len(p.buffer)
-}
-
-func (p *pipe) full() bool {
-	return p.readPos < len(p.buffer) && p.readPos == p.writePos
 }
 
 func (p *pipe) closeReaderLocked(err error, withErr bool) {
@@ -122,39 +113,9 @@ func (p *pipe) closeWrite() error {
 	return nil
 }
 
-func (p *pipe) readChunkLocked(dst []byte) int {
-	n := copy(dst, p.buffer[p.readPos:len(p.buffer)])
-	p.readPos += n
-	if p.readPos == cap(p.buffer) {
-		p.readPos = 0
-		p.buffer = p.buffer[:p.writePos]
-	}
-	return n
-}
-
-func (p *pipe) writeChunkLocked(src []byte) int {
-	end := cap(p.buffer)
-	if p.writePos < p.readPos {
-		end = p.readPos
-	}
-
-	available := min(end-p.writePos, len(src))
-	requiredLen := p.writePos + available
-	if requiredLen > len(p.buffer) {
-		p.buffer = p.buffer[:requiredLen]
-	}
-
-	copy(p.buffer[p.writePos:p.writePos+available], src[:available])
-	p.writePos += available
-	if p.writePos == cap(p.buffer) {
-		p.writePos = 0
-	}
-	return available
-}
-
-func (p *pipe) waitForReadableLocked() error {
+func (p *pipe) waitForDataLocked() error {
 	for {
-		if !p.empty() {
+		if !p.buffer.empty() {
 			return nil
 		}
 		if p.readerClosed {
@@ -173,7 +134,7 @@ func (p *pipe) waitForReadableLocked() error {
 	}
 }
 
-func (p *pipe) waitForWritableLocked() error {
+func (p *pipe) waitForSpaceLocked() error {
 	for {
 		if p.readerClosed {
 			if p.writerClosedErr != nil {
@@ -184,7 +145,7 @@ func (p *pipe) waitForWritableLocked() error {
 		if p.writerClosed {
 			return io.ErrClosedPipe
 		}
-		if !p.full() {
+		if !p.buffer.full() {
 			return nil
 		}
 		p.writerWait.Wait()
