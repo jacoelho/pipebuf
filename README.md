@@ -6,6 +6,8 @@ pipebuf is a small Go package that works like io.Pipe but adds a configurable in
 
 io.Pipe forces the writer to wait until the reader drains each write. That strict hand-off fits continuous streaming but hurts when bursts appear. The writer stalls and the system loses throughput. pipebuf inserts a ring buffer so the writer gets a brief cushion. When the buffer fills, the behavior falls back to the normal blocking semantics, so existing code keeps the same guarantees.
 
+With io.Pipe, every Write() blocks until Read() takes the data. With pipebuf, Write() returns right away when the buffer has space. Once the buffer is full, Write() blocks until Read() makes space, giving you the same blocking as io.Pipe. Read() blocks in both when no data is ready.
+
 ## Quick start
 
 ```go
